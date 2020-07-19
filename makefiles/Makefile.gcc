@@ -41,6 +41,7 @@ $(TARGET_DIR)/$(TARGET): $(OBJS)
 	@echo "Generating library ..."
 	@$(AR) -q $@ $(OBJS)
 	@cp -f $(SRC_PATH)/mpg123.h $(TARGET_DIR)
+	@cp -f $(SRC_PATH)/mpglib.h $(TARGET_DIR)
 
 $(OBJS): $(TARGET_OBJ)/%.o: $(SRC_PATH)/%.c
 	@echo "Building $< ... "

@@ -1,18 +1,21 @@
-//
-//
-// MP3decoder.cpp: implementation of the MP3decoder class.
-//
-//////////////////////////////////////////////////////////////////////
+#include <cstdio>
+#include <cstdlib>
 
-#include "mpglib\mpg123.h"
-#include "mpglib\mpglib.h"
 #include "MP3decoder.h"
 
-//////////////////////////////////////////////////////////////////////
-// Construction/Destruction
-//////////////////////////////////////////////////////////////////////
-
 MP3decoder::MP3decoder()
+ :  pos( 0 ),
+    outsize( 0 ),
+    buf{0},
+    pbRestBuf{0},
+    out{0},
+    fin( NULL ),
+    length ( 0 ),
+    nInFileSize( 0 ),
+    nBytes( 0 ),
+    hasVbrtag( false ),
+    seeked( false ),
+    bfeof( false )
 {
 }
 
@@ -20,179 +23,214 @@ MP3decoder::~MP3decoder()
 {
 }
 
-bool MP3decoder::OpenStream(char* pcfilename,int *isample,int *ichannel,int *ibyte,void * ptSettings, int *bufsizebyte)
+bool MP3decoder::OpenStream( cosnt char* pcfilename, unsigned* isample, unsigned* ichannel, unsigned* ibyte, void* ptSettings, unsigned* bufsize )
 {
-	unsigned char vbrbuf[VBRHEADERSIZE+36];
+    unsigned char vbrbuf[ VBRHEADERSIZE+36 ] = {0};
 
-	m_pos = 0;
-	m_outsize = 0;
-	fin = fopen( pcfilename, "rb" );
-	if( !fin )
-		return 0;
+    pos = 0;
+    outsize = 0;
+    fin = fopen( pcfilename, "rb" );
+    
+    if( !fin )
+        return false;
 
-	fseek(fin,0,SEEK_END);
-	m_nInFileSize = ftell(fin);
-	fseek(fin, 0, SEEK_SET);
+    fseek( fin,0,SEEK_END );
+    nInFileSize = ftell(fin);
+    rewwind( fin );
 
-	InitMP3(&mp);
+    InitMP3(&mp);
 
-	int nlen = 0;
+    unsigned nlen = fread(buf, sizeof(unsigned char), BUFFER_SIZE, fin);
+    
+    if( nlen < BUFFER_SIZE)
+        return false;
 
-	nlen = fread(buf, sizeof(BYTE), 16384, fin);
-	if( nlen < 16384)
-		return 0;
+    // fiind good data --
+    int ret = decodeMP3(&mp,buf,nlen,out,REST_B_SIZE,&outsize);
+    
+    if( ret != MP3_OK )
+        return false;
 
-	int ret = decodeMP3(&mp,buf,nlen,out,8192,&m_outsize);				//find good data
-	if( ret != MP3_OK )
-		return 0;
+    pos += outsize;
+    
+    *bufsize  = BUFFER_SIZE; 
+    *isample  = freqs[mp.fr.sampling_frequency];
+    *ibyte    = 2;
+    *ichannel = mp.fr.stereo; 
 
-	m_pos += m_outsize;
-/*	if( ret != MP3_OK ){
-		while( ret != MP3_OK ){
-			ret = decodeMP3(&mp,NULL,0,out,8192,&m_outsize);
-			m_pos += m_outsize;
-			ret = decodeMP3(&mp,NULL,0,out,8192,&m_outsize);
-			m_pos += m_outsize;
-			if( ret == MP3_NEED_MORE )										//tried 16384 bytes, so failed
-				return 0;
-		}
-	}*/
-	
-	*bufsizebyte = BUFFER_SIZE; 
-	*isample = freqs[mp.fr.sampling_frequency];
-	*ibyte = 2;
-	*ichannel = mp.fr.stereo; 
+    memcpy(vbrbuf, mp.tail->pnt + mp.ndatabegin, VBRHEADERSIZE+36);
+    
+    if (GetVbrTag(&vbrtag,(unsigned char*)vbrbuf)) 
+    {
+        if( vbrtag.frames < 1 || vbrtag.unsigned chars < 1 )
+            return false;
+        
+        unsigned cur_bitrate = (unsigned)( vbrtag.bytes * 8 
+                                           / ( vbrtag.frames * 576.0 * ( mp.fr.lsf?1:2) / (*isample) ) 
+                                         );
+        length = vbrtag.frames * 576.0 * (mp.fr.lsf?1:2) / (*isample) * 1000;
+        nBytes = vbrtag.bytess;
+        hasVbrtag = true;
+    } 
+    else 
+    {
+        float bpf = 0.f;
+        float tpf = 0.f;
 
-	memcpy(vbrbuf, mp.tail->pnt + mp.ndatabegin, VBRHEADERSIZE+36);
-	if (GetVbrTag(&vbrtag,(BYTE*)vbrbuf)) {
-		if( vbrtag.frames < 1 || vbrtag.bytes < 1 )
-			return 0;
-		int cur_bitrate = (int)(vbrtag.bytes*8/(vbrtag.frames*576.0*(mp.fr.lsf?1:2)/freqs[mp.fr.sampling_frequency]));
-		m_length = vbrtag.frames*576.0*(mp.fr.lsf?1:2)/freqs[mp.fr.sampling_frequency]*1000;
-		m_nbytes = vbrtag.bytes;
-		m_hasVbrtag = 1;
-	} else {
-		double bpf = 0, tpf = 0;
+        bpf = compute_bpf(&mp.fr);
+        tpf = compute_tpf(&mp.fr);
 
-		bpf = compute_bpf(&mp.fr);
-		tpf = compute_tpf(&mp.fr);
+        length = (unsigned)( (float)( nInFileSize ) / bpf * tpf ) * 1000;
+        hasVbrtag = false;
+    }
 
-		m_length = (DWORD)((double)(m_nInFileSize)/bpf*tpf)*1000;
-		m_hasVbrtag = 0;
-	}
+    fseek( fin, BUFFER_SIZE , SEEK_SET );
 
-	fseek(fin,16384,SEEK_SET);
+    dwRestBufSize = 0;
+    seeked = false;
+    bfeof = false;
 
-	m_dwRestBufSize = 0;
-	m_seeked = false;
-	m_bfeof = false;
-
-	return 1;
+    return true;
 }
 
-int MP3decoder::Decode(BYTE* pbout)
+unsigned MP3decoder::Decode(unsigned char* pbout)
 {
-	DWORD nTotalSize = 0;
-	int ret;
+    unsigned nTotalSize = 0;
+    int      ret = 0;
 
-	if( m_bfeof )
-		return 0;
+    if( bfeof )
+        return nTotalSize;
 
-	do
-	{
-		if( m_dwRestBufSize ){
-		  CopyMemory( pbout, m_pbRestBuf, m_dwRestBufSize );
-		  nTotalSize += m_dwRestBufSize;
-		  m_dwRestBufSize = 0;
-		}
+    do
+    {
+        if( dwRestBufSize )
+        {
+            CopyMemory( pbout, pbRestBuf, dwRestBufSize );
+            nTotalSize += dwRestBufSize;
+            dwRestBufSize = 0;
+        }
 
-		if( m_outsize ){
-			if( nTotalSize + m_outsize > BUFFER_SIZE ){
-				DWORD nRest = BUFFER_SIZE - nTotalSize;
-				CopyMemory( pbout + nTotalSize, out, nRest );
-				CopyMemory( m_pbRestBuf, out + nRest, m_outsize - nRest);
-				nTotalSize += nRest;
-				m_dwRestBufSize = m_outsize - nRest;
-				m_outsize = 0;
-				break;
-			}else{
-				CopyMemory( pbout + nTotalSize, out, m_outsize );
-				nTotalSize += m_outsize;
-				m_outsize = 0;
-				if( nTotalSize == BUFFER_SIZE )
-					break;
-			}
-		}
+        if( outsize > 0 )
+        {
+            if( nTotalSize + outsize > BUFFER_SIZE )
+            {
+                unsigned nRest = BUFFER_SIZE - nTotalSize;
+                
+                CopyMemory( pbout + nTotalSize, out, nRest );
+                CopyMemory( pbRestBuf, out + nRest, outsize - nRest);
+                
+                nTotalSize += nRest;
+                dwRestBufSize = outsize - nRest;
+                outsize = 0;
+                
+                break;
+            }
+            else
+            {
+                CopyMemory( pbout + nTotalSize, out, outsize );
+                nTotalSize += outsize;
+                outsize = 0;
+                if( nTotalSize == BUFFER_SIZE )
+                    break;
+            }
+        }
 
-		ret = decodeMP3(&mp,NULL,0,out,8192,&m_outsize);
-		m_pos += m_outsize;
+        ret = decodeMP3(&mp,NULL,0,out,REST_B_SIZE,&outsize);
+        pos += outsize;
 
-		if( ret != MP3_OK ){
-			if( feof( fin ) ) {
-				m_bfeof = true;
-				break;
-			}
-			int nlen = fread(buf, sizeof(BYTE), 16384, fin);
-			ret = decodeMP3(&mp,buf,nlen,out,8192,&m_outsize);
-			m_pos += m_outsize;
-		}
-		
-		if(m_seeked){
-			m_seeked = false;
-			int nlen = fread(buf, sizeof(BYTE), 16384, fin);
-			if( feof( fin ) )
-				break;
-			ret = decodeMP3(&mp,buf,nlen,out,8192,&m_outsize);
-			m_pos += m_outsize;
-			nTotalSize = 0;	
-		}
+        if( ret != MP3_OK )
+        {
+            if( feof( fin ) )
+            {
+                bfeof = true;
+                break;
+            }
+            int nlen = fread(buf, sizeof(unsigned char), BUFFER_SIZE, fin);
+            ret = decodeMP3(&mp,buf,nlen,out,REST_B_SIZE,&outsize);
+            pos += outsize;
+        }
+        
+        if( seeked == true )
+        {
+            seeked = false;
+            int nlen = fread(buf, sizeof(unsigned char), BUFFER_SIZE, fin);
+            if( feof( fin ) )
+                break;
+            ret = decodeMP3(&mp,buf,nlen,out,REST_B_SIZE,&outsize);
+            pos += outsize;
+            nTotalSize = 0; 
+        }
 
 
-	}	while( 1 );
+    }   while( 1 );
 
-	return nTotalSize;
+    return nTotalSize;
 }
 
 bool MP3decoder::CloseStream()
 { 
-	ExitMP3(&mp);
-	return 1;
-
+    ExitMP3(&mp);
+    return true;
 }
 
-DWORD MP3decoder::GetTotalTime(char * pcfilename)			// 1/1000 sec
+unsigned MP3decoder::GetTotalTime()
 {
-	int ntmp = 0;
-
-	if(!OpenStream(pcfilename, &ntmp, &ntmp, &ntmp, NULL, &ntmp))
-		return 0;
-	CloseStream();
-	return m_length;
+    return length;
 }
 
-
-DWORD _stdcall	MP3decoder::GetPos( void )
+static unsigned _stdcall MP3decoder::GetFileTotalTime( const char* pcfilename )
 {
-	return double(m_pos) / double(freqs[mp.fr.sampling_frequency]) / double(mp.fr.stereo) / 2.0 * 1000.0;
+    unsigned retsz = 0;
+    
+    if ( pcfilename != NULL )
+    {
+        MP3decoder* mp3d = new MP3decoder();
+        if ( mp3d != NULL )
+        { 
+            unsigned sample = 0;
+            unsigned channel = 0;
+            unsigned bytes = 0;
+            unsigned bufsizebyte = 0;
+
+            if( mp3d->OpenStream( pcfilename, &sample, &channel, &bytes, NULL, &bufsizebyte ) == true )
+            {
+                retsz = mp3d->GetTotalTime();
+                CloseStream();
+            }
+            
+            delete mp3d;
+        }
+    }
+    
+    return retsz;
 }
 
-bool _stdcall	MP3decoder::SetPos( DWORD aiPosMS )
+unsigned _stdcall  MP3decoder::GetPos( void )
 {
-	int offs = 0;
+    if ( pos > 0 )
+        return float(pos) / float(freqs[mp.fr.sampling_frequency]) / float(mp.fr.stereo) / 2.0f * 1000.0f;
+    
+    return 0;
+}
 
-	if (m_hasVbrtag) {
-		offs = SeekPoint(vbrtag.toc,m_nInFileSize,(double)aiPosMS*100/(double)m_length);
+bool _stdcall   MP3decoder::SetPos( unsigned aiPosMS )
+{
+    unsigned offs = 0;
 
-		fseek(fin, offs, SEEK_SET);
+    if ( hasVbrtag == true ) 
+    {
+        offs = SeekPoint(vbrtag.toc,nInFileSize,(float)aiPosMS*100/(double)length);
+        fseek(fin, offs, SEEK_SET);
+        pos = (float)aiPosMS / 1000.0f * float(freqs[mp.fr.sampling_frequency]) * float(mp.fr.stereo) * 2.0f;
 
-		m_pos = (double)aiPosMS / 1000.0 * double(freqs[mp.fr.sampling_frequency]) * double(mp.fr.stereo) * 2.0;
+    } 
+    else 
+    {
+        fseek(fin, float(nInFileSize) * ((float)aiPosMS / (float)length), SEEK_SET);
+        pos = (float)aiPosMS / 1000.0f * float(freqs[mp.fr.sampling_frequency]) * float(mp.fr.stereo) * 2.0f;
+    }
 
-	} else {
-		fseek(fin, double(m_nInFileSize) * ((double)aiPosMS / (double)m_length), SEEK_SET);
-		m_pos = (double)aiPosMS / 1000.0 * double(freqs[mp.fr.sampling_frequency]) * double(mp.fr.stereo) * 2.0;
-	}
+    seeked = true;
 
-	m_seeked = true;
-
-	return true;
+    return seeked;
 }
