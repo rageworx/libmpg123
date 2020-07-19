@@ -1,0 +1,55 @@
+# Project: mpglib123
+# Referenced to https://sourceforge.net/projects/libmpg123/
+# Re-Written by Rapahael Kim
+#
+# Target : Windows.
+#
+
+# Compiliers here:
+CPP= g++
+CC = gcc
+WINDRES = windres
+DLLWRAP = dllwrap
+
+SRC_PATH = ./mpglib
+TARGET_DIR = ./dll
+TARGET_OBJ = ./objs
+
+RES = 
+SRCS = $(wildcard $(SRC_PATH)/*.c)
+OBJS = $(SRCS:$(SRC_PATH)/%.c=$(TARGET_OBJ)/%.o)
+LINKOBJS += $(RES)
+
+LIBS +=  --no-export-all-symbols --add-stdcall-alias 
+INCS +=  -Impglib 
+
+TARGET = libmpg123.dll
+DEFFILE = libmpg123.def
+STATICLIB = libmpg123.a
+
+CXXFLAGS = $(CXXINCS) -DBUILDING_DLL=1 
+CFLAGS = $(INCS) -DBUILDING_DLL=1 
+
+.PHONY: all clean
+
+all: prepare $(TARGET_DIR)/$(TARGET)
+
+clean:
+	@rm -f $(OBJS)
+	@rm -f $(TARGET_DIR)/$(TARGET)
+	@rm -f $(TARGET_DIR)/$(DEFFILE)
+	@rm -f $(TARGET_DIR)/$(STATICLIB)
+	@rm -f $(TARGET_DIR)/*.h
+
+prepare:
+	@mkdir -p $(TARGET_DIR)
+	@mkdir -p $(TARGET_OBJ)
+
+$(TARGET_DIR)/$(TARGET): $(OBJS)
+	@echo "Generating DLL ..."
+	@$(DLLWRAP) --output-def $(TARGET_DIR)/$(DEFFILE) --driver-name c++ --implib $(TARGET_DIR)/$(STATICLIB) $(OBJS) $(LIBS) -o $@
+	@cp -f $(SRC_PATH)/mpg123.h $(TARGET_DIR)
+
+$(OBJS): $(TARGET_OBJ)/%.o: $(SRC_PATH)/%.c
+	@echo "Building $< ... "
+	@$(CPP) $(CXXFLAGS) -c $< -o $@

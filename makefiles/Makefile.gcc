@@ -1,0 +1,49 @@
+# Project: mpglib123
+# Referenced to https://sourceforge.net/projects/libmpg123/
+# Re-Written by Rapahael Kim
+#
+
+# Compiliers here:
+CPP= g++
+CC = gcc
+AR = ar
+WINDRES = windres
+DLLWRAP = dllwrap
+
+SRC_PATH = ./mpglib
+TARGET_DIR = ./lib
+TARGET_OBJ = ./objs
+
+RES = 
+SRCS = $(wildcard $(SRC_PATH)/*.c)
+OBJS = $(SRCS:$(SRC_PATH)/%.c=$(TARGET_OBJ)/%.o)
+LINKOBJS += $(RES)
+
+LIBS +=  --no-export-all-symbols --add-stdcall-alias 
+INCS +=  -Impglib 
+
+TARGET = libmpg123.a
+CXXFLAGS = $(CXXINCS)
+CFLAGS = $(INCS)
+
+.PHONY: all clean
+
+all: prepare $(TARGET_DIR)/$(TARGET)
+
+clean:
+	@rm -f $(OBJS)
+	@rm -f $(TARGET_DIR)/$(TARGET)
+	@rm -f $(TARGET_DIR)/*.h
+	
+prepare:
+	@mkdir -p $(TARGET_DIR)
+	@mkdir -p $(TARGET_OBJ)
+
+$(TARGET_DIR)/$(TARGET): $(OBJS)
+	@echo "Generating library ..."
+	@$(AR) -q $@ $(OBJS)
+	@cp -f $(SRC_PATH)/mpg123.h $(TARGET_DIR)
+
+$(OBJS): $(TARGET_OBJ)/%.o: $(SRC_PATH)/%.c
+	@echo "Building $< ... "
+	@$(CPP) $(CFLAGS) $(CXXFLAGS) -c $< -o $@
