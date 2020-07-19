@@ -20,7 +20,7 @@ LINKOBJS += $(RES)
 LIBS +=  --no-export-all-symbols --add-stdcall-alias 
 INCS +=  -Impglib 
 
-TARGET = libmpg123.a
+TARGET = libmpg123.so
 CXXFLAGS = $(CXXINCS)
 CFLAGS = $(INCS)
 
@@ -39,9 +39,9 @@ prepare:
 
 $(TARGET_DIR)/$(TARGET): $(OBJS)
 	@echo "Generating library ..."
-	@$(AR) -q $@ $(OBJS)
+	@$(CPP) -shared $(CFLAGS) $(CXXFLAGS) $(OBJS) -o $@
 	@cp -f $(SRC_PATH)/mpg123.h $(TARGET_DIR)
 
 $(OBJS): $(TARGET_OBJ)/%.o: $(SRC_PATH)/%.c
 	@echo "Building $< ... "
-	@$(CPP) $(CFLAGS) $(CXXFLAGS) -c $< -o $@
+	@$(CPP) $(CXXFLAGS) -c $< -o $@

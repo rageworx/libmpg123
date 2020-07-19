@@ -1,0 +1,10 @@
+Building kinds to this way:
+
+ * static library
+     make -f makefiles/Makefile.gcc
+
+ * dynamic library
+     make -f makefiles/Makefile.gcc_so
+
+ * windows DLL
+     make -f makefiles/Makefile.gcc_dll
