@@ -4,8 +4,7 @@
 #
 
 # Compiliers here:
-CPP= g++
-CC = gcc
+GPP= g++
 AR = ar
 
 SRC_PATH = ./mpglib
@@ -21,8 +20,7 @@ LIBS +=  --no-export-all-symbols --add-stdcall-alias
 INCS +=  -Impglib 
 
 TARGET = libmpg123.a
-CXXFLAGS = $(CXXINCS)
-CFLAGS = $(INCS)
+CFLAGS = -std=c++11 $(INCS)
 
 .PHONY: all clean
 
@@ -45,4 +43,4 @@ $(TARGET_DIR)/$(TARGET): $(OBJS)
 
 $(OBJS): $(TARGET_OBJ)/%.o: $(SRC_PATH)/%.c
 	@echo "Building $< ... "
-	@$(CPP) $(CFLAGS) $(CXXFLAGS) -c $< -o $@
+	@$(GPP) $(CFLAGS) -c $< -o $@
